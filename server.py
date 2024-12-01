@@ -222,7 +222,7 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 0.5) -> List[List[int]]
         print(f"Mask value range: [{mask.min()}, {mask.max()}]")
 
         # Ensure mask is binary and convert to uint8
-        mask_binary = (mask > 0.5).astype(np.uint8) * 255
+        mask_binary = (mask > 0.1).astype(np.uint8) * 255
 
         # Debug: Print number of non-zero pixels
         print(f"Number of non-zero pixels: {np.count_nonzero(mask_binary)}")
@@ -410,7 +410,7 @@ async def analyze_image_with_visualization(
         for idx, (mask, box, phrase, color) in enumerate(zip(masks, boxes_filt, pred_phrases, colors)):
             # 마스크를 폴리곤으로 변환
             mask_np = mask.cpu().numpy().squeeze()
-            polygon = mask_to_polygon(mask_np, tolerance=0.5)
+            polygon = mask_to_polygon(mask_np, tolerance=0.1)
 
             if polygon:  # 폴리곤이 생성된 경우
                 # NumPy 배열로 변환
