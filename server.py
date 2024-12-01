@@ -424,10 +424,23 @@ async def analyze_image_with_visualization(
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
 
-            # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
+            # 패딩 크기 설정 (커널 크기의 2배)
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
             kernel_size = max(3, int(min_side * 0.05))  # 최소 3x3 보장
             kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1  # 홀수로 만들기
+            padding_size = kernel_size * 2
+
+            # 패딩 추가
+            padded_mask = np.pad(mask_binary, ((padding_size, padding_size), (padding_size, padding_size)),
+                                 mode='constant', constant_values=0)
+            # 패딩된 마스크에 대해 모폴로지 연산 수행
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            padded_mask = cv2.morphologyEx(padded_mask, cv2.MORPH_CLOSE, kernel)
+
+            # 원래 크기로 복원
+            mask_binary = padded_mask[padding_size:-padding_size, padding_size:-padding_size]
+
+            # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
             mask_binary = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel)
 
