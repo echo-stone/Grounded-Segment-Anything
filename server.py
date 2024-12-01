@@ -22,12 +22,14 @@ from segment_anything import sam_model_registry, SamPredictor
 app = FastAPI()
 
 # Configuration
-# CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinT_OGC.py"
-# GROUNDED_CHECKPOINT = "groundingdino_swint_ogc.pth"
 CONFIG_PATH = "GroundingDINO/groundingdino/config/GroundingDINO_SwinB.py"
 GROUNDED_CHECKPOINT = "groundingdino_swinb_cogcoor.pth"
 SAM_CHECKPOINT = "sam_vit_h_4b8939.pth"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Create output directory if it doesn't exist
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 def load_image(image_path):
@@ -102,6 +104,9 @@ def show_box(box, ax, label):
 async def startup_event():
     global grounding_dino_model, sam_predictor
 
+    print(f"Using device: {DEVICE}")
+    print("Loading models...")
+
     # Load Grounding DINO model
     grounding_dino_model = load_model(CONFIG_PATH, GROUNDED_CHECKPOINT, DEVICE)
 
@@ -109,6 +114,8 @@ async def startup_event():
     sam_model = sam_model_registry["vit_h"](checkpoint=SAM_CHECKPOINT)
     sam_model = sam_model.to(DEVICE)
     sam_predictor = SamPredictor(sam_model)
+
+    print("Models loaded successfully!")
 
 
 @app.post("/analyze/")
@@ -118,15 +125,16 @@ async def analyze_image(
         box_threshold: float = Form(0.3),
         text_threshold: float = Form(0.25)
 ):
-    # Create temporary directory
-    with tempfile.TemporaryDirectory() as temp_dir:
-        # Save uploaded image
-        image_path = Path(temp_dir) / "input_image.jpg"
-        with image_path.open("wb") as buffer:
+    try:
+        # Save uploaded image to output directory
+        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
+        with open(image_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
+        print(f"Processing image with prompt: {text_prompt}")
+
         # Load and process image
-        image_pil, image_tensor = load_image(str(image_path))
+        image_pil, image_tensor = load_image(image_path)
 
         # Get Grounding DINO output
         boxes_filt, pred_phrases = get_grounding_output(
@@ -139,7 +147,7 @@ async def analyze_image(
         )
 
         # Process image for SAM
-        image_array = cv2.cvtColor(cv2.imread(str(image_path)), cv2.COLOR_BGR2RGB)
+        image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
         sam_predictor.set_image(image_array)
 
         # Transform boxes
@@ -171,7 +179,7 @@ async def analyze_image(
         plt.axis('off')
 
         # Save output image
-        output_path = Path(temp_dir) / "grounded_sam_output.jpg"
+        output_path = os.path.join(OUTPUT_DIR, "grounded_sam_output.jpg")
         plt.savefig(
             output_path,
             bbox_inches="tight",
@@ -180,11 +188,20 @@ async def analyze_image(
         )
         plt.close()
 
-        return FileResponse(
-            output_path,
-            media_type="image/jpeg",
-            filename="grounded_sam_output.jpg"
-        )
+        print(f"Analysis complete. Result saved to: {output_path}")
+
+        if os.path.exists(output_path):
+            return FileResponse(
+                output_path,
+                media_type="image/jpeg",
+                filename="grounded_sam_output.jpg"
+            )
+        else:
+            return {"error": "Failed to generate output image"}
+
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":
