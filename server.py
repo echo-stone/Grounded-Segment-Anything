@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import os
 import torch
 from PIL import Image
@@ -8,8 +8,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import shutil
-import tempfile
-
+from typing import List, Dict
+import json
 # Grounding DINO imports
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
@@ -18,6 +18,7 @@ from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases
 
 # Segment Anything imports
 from segment_anything import sam_model_registry, SamPredictor
+from skimage import measure
 
 app = FastAPI()
 
@@ -118,7 +119,7 @@ async def startup_event():
     print("Models loaded successfully!")
 
 
-@app.post("/analyze/")
+@app.post("/analyze")
 async def analyze_image(
         image: UploadFile = File(...),
         text_prompt: str = Form(...),
@@ -203,6 +204,118 @@ async def analyze_image(
         print(f"Error during processing: {str(e)}")
         return {"error": str(e)}
 
+
+def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]:
+    """
+    마스크를 단일 다각형 좌표로 변환합니다 (외곽 윤곽선만 사용).
+
+    Args:
+        mask: 2D numpy array (binary mask)
+        tolerance: 다각형 단순화 파라미터
+
+    Returns:
+        List of [x,y] coordinates representing the polygon
+    """
+    # 마스크에서 컨투어 찾기
+    contours = measure.find_contours(mask.astype(np.float32), 0.5)
+
+    if not contours:
+        return []
+
+    # 가장 긴 컨투어를 외곽 윤곽선으로 선택
+    main_contour = max(contours, key=len)
+
+    # 점들의 순서를 시계방향으로 정렬
+    if measure.points_in_poly(main_contour[0], main_contour).size > 0:
+        main_contour = np.flip(main_contour, axis=1)
+
+    # 컨투어를 단순화하여 포인트 수를 줄임
+    coords = measure.approximate_polygon(main_contour, tolerance=tolerance)
+
+    # 좌표를 정수로 변환하고 리스트 형태로 변경
+    polygon = [[int(x), int(y)] for x, y in coords]
+
+    return polygon
+
+
+@app.post("/analyze/masks")
+async def analyze_image_masks(
+        image: UploadFile = File(...),
+        text_prompt: str = Form(...),
+        box_threshold: float = Form(0.3),
+        text_threshold: float = Form(0.25)
+) -> Dict:
+    try:
+        # Save uploaded image
+        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        # Load and process image
+        image_pil, image_tensor = load_image(image_path)
+
+        # Get Grounding DINO output
+        boxes_filt, pred_phrases = get_grounding_output(
+            grounding_dino_model,
+            image_tensor,
+            text_prompt,
+            box_threshold,
+            text_threshold,
+            device=DEVICE
+        )
+
+        # Process image for SAM
+        image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        sam_predictor.set_image(image_array)
+
+        # Transform boxes
+        size = image_pil.size
+        H, W = size[1], size[0]
+        for i in range(boxes_filt.size(0)):
+            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+            boxes_filt[i][2:] += boxes_filt[i][:2]
+
+        transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
+
+        # Generate masks
+        masks, _, _ = sam_predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes,
+            multimask_output=False,
+        )
+
+        # Convert masks to polygons and create response
+        results = []
+        for idx, (mask, box, phrase) in enumerate(zip(masks, boxes_filt, pred_phrases)):
+            mask_np = mask.cpu().numpy()[0]  # Convert to numpy and remove batch dimension
+            polygon = mask_to_polygon(mask_np)
+
+            # Extract confidence score from phrase
+            confidence = float(phrase.split('(')[-1].strip(')'))
+            label = phrase.split('(')[0]
+
+            results.append({
+                "id": idx,
+                "label": label,
+                "confidence": confidence,
+                "bbox": box.tolist(),
+                "polygon": polygon
+            })
+
+        return JSONResponse(content={
+            "success": True,
+            "objects": results,
+            "image_size": {"width": W, "height": H}
+        })
+
+    except Exception as e:
+        print(f"Error during processing: {str(e)}")
+        return JSONResponse(content={
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn
