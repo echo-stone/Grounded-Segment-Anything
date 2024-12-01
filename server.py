@@ -238,7 +238,7 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]
     return polygon
 
 
-@app.post("/analyze/masks")
+@app.post("/analyze/masks/")
 async def analyze_image_masks(
         image: UploadFile = File(...),
         text_prompt: str = Form(...),
@@ -263,6 +263,13 @@ async def analyze_image_masks(
             text_threshold,
             device=DEVICE
         )
+
+        if len(boxes_filt) == 0:
+            return JSONResponse(content={
+                "success": True,
+                "objects": [],
+                "image_size": {"width": image_pil.size[0], "height": image_pil.size[1]}
+            })
 
         # Process image for SAM
         image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
@@ -289,12 +296,18 @@ async def analyze_image_masks(
         # Convert masks to polygons and create response
         results = []
         for idx, (mask, box, phrase) in enumerate(zip(masks, boxes_filt, pred_phrases)):
-            mask_np = mask.cpu().numpy()[0]  # Convert to numpy and remove batch dimension
-            polygon = mask_to_polygon(mask_np)
+            # 마스크를 numpy 배열로 변환하고 차원 조정
+            mask_np = mask.cpu().numpy().squeeze()  # Remove unnecessary dimensions
+
+            # 마스크가 비어있지 않은 경우에만 처리
+            if mask_np.any():
+                polygon = mask_to_polygon(mask_np)
+            else:
+                polygon = []
 
             # Extract confidence score from phrase
             confidence = float(phrase.split('(')[-1].strip(')'))
-            label = phrase.split('(')[0]
+            label = phrase.split('(')[0].strip()
 
             results.append({
                 "id": idx,
@@ -312,10 +325,13 @@ async def analyze_image_masks(
 
     except Exception as e:
         print(f"Error during processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return JSONResponse(content={
             "success": False,
             "error": str(e)
         }, status_code=500)
+
 
 if __name__ == "__main__":
     import uvicorn
