@@ -327,7 +327,7 @@ async def analyze_image_masks(
             mask_np = mask.cpu().numpy().squeeze()
 
             # Get polygon with debug information
-            polygon = mask_to_polygon(mask_np, tolerance=0.5)
+            polygon = mask_to_polygon(mask_np, tolerance=0.01)
 
             # Extract confidence score from phrase
             confidence = float(phrase.split('(')[-1].strip(')'))
