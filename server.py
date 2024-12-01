@@ -356,6 +356,110 @@ async def analyze_image_masks(
             "error": str(e)
         }, status_code=500)
 
+
+@app.post("/analyze/visualize")
+async def analyze_image_with_visualization(
+        image: UploadFile = File(...),
+        text_prompt: str = Form(...),
+        box_threshold: float = Form(0.3),
+        text_threshold: float = Form(0.25)
+) -> FileResponse:
+    try:
+        # 입력 이미지 저장
+        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        # 이미지 로드 및 처리
+        image_pil, image_tensor = load_image(image_path)
+
+        # Grounding DINO 출력
+        boxes_filt, pred_phrases = get_grounding_output(
+            grounding_dino_model,
+            image_tensor,
+            text_prompt,
+            box_threshold,
+            text_threshold,
+            device=DEVICE
+        )
+
+        # SAM 처리
+        image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        sam_predictor.set_image(image_array)
+
+        # 박스 변환
+        size = image_pil.size
+        H, W = size[1], size[0]
+        transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
+
+        # 마스크 생성
+        masks, _, _ = sam_predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes,
+            multimask_output=False,
+        )
+
+        # 시각화를 위한 플롯 생성
+        plt.figure(figsize=(20, 20))
+        plt.imshow(image_array)
+
+        # 각 마스크에 대해 처리
+        colors = plt.cm.rainbow(np.linspace(0, 1, len(masks)))  # 각 객체별 다른 색상
+
+        for idx, (mask, box, phrase, color) in enumerate(zip(masks, boxes_filt, pred_phrases, colors)):
+            # 마스크를 폴리곤으로 변환
+            mask_np = mask.cpu().numpy().squeeze()
+            polygon = mask_to_polygon(mask_np, tolerance=0.5)
+
+            if polygon:  # 폴리곤이 생성된 경우
+                # NumPy 배열로 변환
+                polygon_np = np.array(polygon)
+
+                # 폴리곤 그리기
+                plt.fill(polygon_np[:, 0], polygon_np[:, 1],
+                         color=color, alpha=0.3, label=phrase)
+                plt.plot(polygon_np[:, 0], polygon_np[:, 1],
+                         color=color, linewidth=2)
+
+            # 바운딩 박스 그리기
+            box_np = box.cpu().numpy()
+            x1, y1, x2, y2 = box_np * np.array([W, H, W, H])
+            plt.plot([x1, x2, x2, x1, x1], [y1, y1, y2, y2, y1],
+                     color=color, linewidth=2)
+
+            # 레이블 추가
+            confidence = float(phrase.split('(')[-1].strip(')'))
+            label = phrase.split('(')[0].strip()
+            plt.text(x1, y1 - 5, f'{label} ({confidence:.2f})',
+                     color=color, fontsize=12,
+                     bbox=dict(facecolor='white', alpha=0.7))
+
+        plt.axis('off')
+
+        # 범례 추가
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+        # 결과 저장
+        output_path = os.path.join(OUTPUT_DIR, "visualization_output.png")
+        plt.savefig(output_path, bbox_inches='tight', dpi=300, pad_inches=0.0)
+        plt.close()
+
+        return FileResponse(
+            output_path,
+            media_type="image/png",
+            filename="visualization_output.png"
+        )
+
+    except Exception as e:
+        print(f"Error during visualization: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse(
+            content={"success": False, "error": str(e)},
+            status_code=500
+        )
+
 if __name__ == "__main__":
     import uvicorn
 
