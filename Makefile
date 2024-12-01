@@ -35,6 +35,9 @@ endif
 ifeq (,$(wildcard ./groundingdino_swint_ogc.pth))
 	wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
 endif
+ifeq (,$(wildcard ./groundingdino_swinb_cogcoor.pth))
+	wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha2/groundingdino_swinb_cogcoor.pth
+endif
 	docker run --gpus all -it --rm --net=host --privileged \
 	-v /tmp/.X11-unix:/tmp/.X11-unix \
 	-v "${PWD}":/home/appuser/Grounded-Segment-Anything \
