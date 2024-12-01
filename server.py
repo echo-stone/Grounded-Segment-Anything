@@ -459,7 +459,7 @@ async def analyze_image_with_visualization(
             ax5 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 5)
             ax5.imshow(image_array)
 
-            polygon = mask_to_polygon(mask_np, tolerance=tolerance)  # 입력받은 tolerance 사용
+            polygon = mask_to_polygon(mask_np, tolerance=tolerance)
             if polygon:
                 polygon_np = np.array(polygon)
                 ax5.fill(polygon_np[:, 0], polygon_np[:, 1],
@@ -467,17 +467,10 @@ async def analyze_image_with_visualization(
                 ax5.plot(polygon_np[:, 0], polygon_np[:, 1],
                          color=color, linewidth=2)
 
-            # 바운딩 박스 그리기
+            # 바운딩 박스만 그리고 레이블 텍스트는 제거
             x0, y0, x1, y1 = box.cpu().numpy()
             ax5.plot([x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0],
                      color=color, linewidth=2)
-
-            # 레이블 추가
-            confidence = float(phrase.split('(')[-1].strip(')'))
-            label = phrase.split('(')[0].strip()
-            ax5.text(x0, y0 - 5, f'{label} ({confidence:.2f})',
-                     color=color, fontsize=12,
-                     bbox=dict(facecolor='white', alpha=0.7))
 
             ax5.set_title(f'Final Result {mask_idx + 1}')
             ax5.axis('off')
