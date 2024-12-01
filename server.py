@@ -204,6 +204,7 @@ async def analyze_image(
         print(f"Error during processing: {str(e)}")
         return {"error": str(e)}
 
+
 def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]:
     """
     마스크를 단일 다각형 좌표로 변환합니다 (외곽 윤곽선만 사용).
@@ -216,31 +217,39 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]
         List of [x,y] coordinates representing the polygon
     """
     try:
-        # Find contours using OpenCV instead of skimage
+        # Ensure mask is binary
+        mask_binary = (mask > 0.5).astype(np.uint8) * 255
+
+        # Find contours
         contours, _ = cv2.findContours(
-            mask.astype(np.uint8),
-            cv2.RETR_EXTERNAL,  # 외곽 윤곽선만 검출
-            cv2.CHAIN_APPROX_SIMPLE
+            mask_binary,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_TC89_KCOS  # Use more precise approximation method
         )
 
         if not contours:
             return []
 
-        # 가장 큰 컨투어 선택
+        # Get the largest contour by area
         main_contour = max(contours, key=cv2.contourArea)
 
-        # 컨투어 단순화
+        # Approximate the contour
         epsilon = tolerance * cv2.arcLength(main_contour, True)
         approx = cv2.approxPolyDP(main_contour, epsilon, True)
 
-        # 좌표를 리스트로 변환
-        polygon = [[int(x), int(y)] for [[x, y]] in approx]
+        # Convert the contour points to a list of [x,y] coordinates
+        polygon = [[int(point[0][0]), int(point[0][1])] for point in approx]
+
+        # Ensure we have enough points for a meaningful polygon
+        if len(polygon) < 3:
+            return []
 
         return polygon
 
     except Exception as e:
         print(f"Error in mask_to_polygon: {str(e)}")
         return []
+
 
 @app.post("/analyze/masks/")
 async def analyze_image_masks(
@@ -300,14 +309,11 @@ async def analyze_image_masks(
         # Convert masks to polygons and create response
         results = []
         for idx, (mask, box, phrase) in enumerate(zip(masks, boxes_filt, pred_phrases)):
-            # 마스크를 numpy 배열로 변환하고 차원 조정
-            mask_np = mask.cpu().numpy().squeeze()  # Remove unnecessary dimensions
+            # Convert mask to numpy array
+            mask_np = mask.cpu().numpy().squeeze()
 
-            # 마스크가 비어있지 않은 경우에만 처리
-            if mask_np.any():
-                polygon = mask_to_polygon(mask_np)
-            else:
-                polygon = []
+            # Convert to polygon with smaller tolerance for more precise boundary
+            polygon = mask_to_polygon(mask_np, tolerance=1.0)  # Reduced tolerance for more detail
 
             # Extract confidence score from phrase
             confidence = float(phrase.split('(')[-1].strip(')'))
@@ -335,7 +341,6 @@ async def analyze_image_masks(
             "success": False,
             "error": str(e)
         }, status_code=500)
-
 
 if __name__ == "__main__":
     import uvicorn
