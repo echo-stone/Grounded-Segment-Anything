@@ -204,7 +204,6 @@ async def analyze_image(
         print(f"Error during processing: {str(e)}")
         return {"error": str(e)}
 
-
 def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]:
     """
     마스크를 단일 다각형 좌표로 변환합니다 (외곽 윤곽선만 사용).
@@ -216,27 +215,32 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]
     Returns:
         List of [x,y] coordinates representing the polygon
     """
-    # 마스크에서 컨투어 찾기
-    contours = measure.find_contours(mask.astype(np.float32), 0.5)
+    try:
+        # Find contours using OpenCV instead of skimage
+        contours, _ = cv2.findContours(
+            mask.astype(np.uint8),
+            cv2.RETR_EXTERNAL,  # 외곽 윤곽선만 검출
+            cv2.CHAIN_APPROX_SIMPLE
+        )
 
-    if not contours:
+        if not contours:
+            return []
+
+        # 가장 큰 컨투어 선택
+        main_contour = max(contours, key=cv2.contourArea)
+
+        # 컨투어 단순화
+        epsilon = tolerance * cv2.arcLength(main_contour, True)
+        approx = cv2.approxPolyDP(main_contour, epsilon, True)
+
+        # 좌표를 리스트로 변환
+        polygon = [[int(x), int(y)] for [[x, y]] in approx]
+
+        return polygon
+
+    except Exception as e:
+        print(f"Error in mask_to_polygon: {str(e)}")
         return []
-
-    # 가장 긴 컨투어를 외곽 윤곽선으로 선택
-    main_contour = max(contours, key=len)
-
-    # 점들의 순서를 시계방향으로 정렬
-    if measure.points_in_poly(main_contour[0], main_contour).size > 0:
-        main_contour = np.flip(main_contour, axis=1)
-
-    # 컨투어를 단순화하여 포인트 수를 줄임
-    coords = measure.approximate_polygon(main_contour, tolerance=tolerance)
-
-    # 좌표를 정수로 변환하고 리스트 형태로 변경
-    polygon = [[int(x), int(y)] for x, y in coords]
-
-    return polygon
-
 
 @app.post("/analyze/masks/")
 async def analyze_image_masks(
