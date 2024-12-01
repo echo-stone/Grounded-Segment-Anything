@@ -329,16 +329,16 @@ def find_board_corners(mask):
     edges = cv2.Canny(mask, 50, 150, apertureSize=3)
 
     # Apply Hough Transform
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=10)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=20)
     if lines is None or len(lines) < 4:
         print(f"not enough HoughLines {len(lines)}")
-        return None, None, lines
+        return None, None, None
 
     # Filter lines to get the strongest 4 lines
     filtered_lines = filter_lines(lines)
     if len(filtered_lines) < 4:
         print(f"not enough filtered_lines {len(filtered_lines)}")
-        return None, None, filtered_lines
+        return None, None, None
 
     # Convert lines from polar to cartesian coordinates
     cartesian_lines = []
@@ -380,8 +380,115 @@ def find_board_corners(mask):
 
         return corners, cartesian_lines, filtered_lines
 
-    return corners, cartesian_lines, filtered_lines
+    return None, None, None
 
+
+def find_board_corners_with_fallback(mask):
+    """
+    Find board corners using Hough Transform with goodFeaturesToTrack as fallback.
+
+    Args:
+        mask: Binary mask image (numpy array)
+
+    Returns:
+        tuple: (corners, cartesian_lines, filtered_lines)
+        - corners: numpy array of corner coordinates or None if detection fails
+        - cartesian_lines: list of line coordinates or None
+        - filtered_lines: list of filtered Hough lines or None
+    """
+    # First try with Hough Transform
+    corners, cartesian_lines, filtered_lines = find_board_corners(mask)
+
+    if corners is not None and len(corners) == 4:
+        return corners, cartesian_lines, filtered_lines
+
+    print("Hough transform corner detection failed, trying goodFeaturesToTrack...")
+
+    try:
+        # Convert to proper format for goodFeaturesToTrack
+        mask_uint8 = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask
+
+        # Add padding to help with corner detection near edges
+        pad_size = 10
+        padded_mask = np.pad(mask_uint8, ((pad_size, pad_size), (pad_size, pad_size)),
+                             mode='constant', constant_values=0)
+
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(padded_mask, (5, 5), 0)
+
+        # Detect corners
+        corners = cv2.goodFeaturesToTrack(
+            blurred,
+            maxCorners=8,  # Detect more corners than needed
+            qualityLevel=0.01,
+            minDistance=20,
+            blockSize=7
+        )
+
+        if corners is None or len(corners) < 4:
+            print("Failed to detect enough corners with goodFeaturesToTrack")
+            return None, None, None
+
+        # Remove padding offset from coordinates
+        corners = corners.squeeze() - pad_size
+
+        # If we have more than 4 corners, select the best 4
+        if len(corners) > 4:
+            # Calculate distances from center
+            center = np.mean(corners, axis=0)
+            distances = np.linalg.norm(corners - center, axis=1)
+
+            # Get indices of the 4 corners furthest from center
+            corner_indices = np.argsort(distances)[-4:]
+            corners = corners[corner_indices]
+
+        # Sort corners in clockwise order
+        center = np.mean(corners, axis=0)
+        angles = np.arctan2(corners[:, 1] - center[1],
+                            corners[:, 0] - center[0])
+        sorted_indices = np.argsort(angles)
+        corners = corners[sorted_indices]
+
+        return corners, None, None  # Return None for lines since we didn't use Hough
+
+    except Exception as e:
+        print(f"Error in goodFeaturesToTrack fallback: {str(e)}")
+        return None, None, None
+
+# Update the visualization code to handle the fallback case
+def visualize_corners_on_image(ax, image, corners, cartesian_lines=None):
+    """
+    Visualize detected corners and lines on the image
+
+    Args:
+        ax: matplotlib axis
+        image: original image
+        corners: detected corners
+        cartesian_lines: detected lines (optional)
+    """
+    ax.imshow(image)
+
+    if corners is not None:
+        # Draw corners
+        for i, corner in enumerate(corners):
+            ax.plot(corner[0], corner[1], 'ro', markersize=8)
+            ax.annotate(f'C{i + 1}', (corner[0], corner[1]),
+                        xytext=(10, 10), textcoords='offset points')
+
+        # Draw lines between corners
+        corners_wrapped = np.vstack((corners, corners[0]))
+        for i in range(len(corners)):
+            ax.plot([corners_wrapped[i][0], corners_wrapped[i + 1][0]],
+                    [corners_wrapped[i][1], corners_wrapped[i + 1][1]],
+                    color='red', linewidth=2)
+
+    # Draw Hough lines if available
+    if cartesian_lines is not None:
+        for line in cartesian_lines:
+            x1, y1, x2, y2 = line
+            ax.plot([x1, x2], [y1, y2], 'b-', linewidth=1, alpha=0.5)
+
+    ax.axis('off')
 
 @app.post("/analyze/visualize")
 async def analyze_image_with_visualization(
@@ -449,20 +556,16 @@ async def analyze_image_with_visualization(
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
 
-            # 패딩 추가
-            # 패딩 크기 설정 (커널 크기의 2배)
+            # 패딩 및 모폴로지 연산 적용
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
-            kernel_size = max(3, int(min_side * 0.05))  # 최소 3x3 보장
-            kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1  # 홀수로 만들기
+            kernel_size = max(3, int(min_side * 0.05))
+            kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
             padding_size = kernel_size * 2
 
             padded_mask = np.pad(mask_binary, ((padding_size, padding_size), (padding_size, padding_size)),
                                  mode='constant', constant_values=0)
-            # 패딩된 마스크에 대해 모폴로지 연산 수행
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
             padded_mask = cv2.morphologyEx(padded_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
-
-            # 원래 크기로 복원
             mask_binary = padded_mask[padding_size:-padding_size, padding_size:-padding_size]
 
             ax2 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 2)
@@ -470,53 +573,39 @@ async def analyze_image_with_visualization(
             ax2.set_title(f'Binary Mask {mask_idx + 1}')
             ax2.axis('off')
 
-
-            # 3. 엣지 및 허프 라인
+            # 3. 엣지
             edges = cv2.Canny(mask_binary, 50, 150, apertureSize=3)
             ax3 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 3)
             ax3.imshow(edges, cmap='gray')
             ax3.set_title(f'Edges {mask_idx + 1}')
             ax3.axis('off')
 
-            # 4. 검출된 라인과 코너
-            corners, cartesian_lines, hough_lines = find_board_corners(mask_binary)
-            line_img = np.zeros_like(mask_binary)
+            # 4. 코너 검출 결과 (with fallback)
+            corners, cartesian_lines, _ = find_board_corners_with_fallback(mask_binary)
+            ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
 
+            # Create a blank image for lines
+            line_img = np.zeros_like(mask_binary)
             if cartesian_lines is not None:
-                # Draw detected lines
                 for line in cartesian_lines:
                     x1, y1, x2, y2 = line
                     cv2.line(line_img, (x1, y1), (x2, y2), 255, 2)
 
-            ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
             ax4.imshow(line_img, cmap='gray')
             if corners is not None:
                 for corner in corners:
                     ax4.plot(corner[0], corner[1], 'ro', markersize=8)
-            ax4.set_title(f'Lines and Corners {mask_idx + 1}')
+
+            detection_method = "Hough Transform" if cartesian_lines is not None else "GoodFeaturesToTrack"
+            ax4.set_title(f'Corners ({detection_method}) {mask_idx + 1}')
             ax4.axis('off')
 
             # 5. 최종 결과
             ax5 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 5)
-            ax5.imshow(image_array)
-
-            if corners is not None:
-                # Draw corners on the original image
-                for i, corner in enumerate(corners):
-                    ax5.plot(corner[0], corner[1], 'ro', markersize=8)
-                    ax5.annotate(f'C{i + 1}', (corner[0], corner[1]),
-                                 xytext=(10, 10), textcoords='offset points')
-
-                # Draw lines between corners
-                corners_wrapped = np.vstack((corners, corners[0]))
-                for i in range(len(corners)):
-                    ax5.plot([corners_wrapped[i][0], corners_wrapped[i + 1][0]],
-                             [corners_wrapped[i][1], corners_wrapped[i + 1][1]],
-                             color='red', linewidth=2)
+            visualize_corners_on_image(ax5, image_array, corners, cartesian_lines)
 
             confidence = float(phrase.split('(')[-1].strip(')'))
             ax5.set_title(f'Final Result {mask_idx + 1}\nConfidence: {confidence:.3f}')
-            ax5.axis('off')
 
         plt.tight_layout()
         output_path = os.path.join(OUTPUT_DIR, "visualization_output.png")
@@ -558,8 +647,8 @@ async def analyze_image_masks(
             # Convert to binary mask
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
 
-            # Find corners using Hough Transform
-            corners, _, _ = find_board_corners(mask_binary)
+            # Find corners using Hough Transform with goodFeaturesToTrack fallback
+            corners, _, _ = find_board_corners_with_fallback(mask_binary)
 
             if corners is not None:
                 # Extract confidence score from phrase
@@ -571,7 +660,8 @@ async def analyze_image_masks(
                     "label": label,
                     "confidence": confidence,
                     "bbox": box.tolist(),
-                    "corners": corners.tolist()
+                    "corners": corners.tolist(),
+                    "detection_method": "hough_transform" if _ is not None else "good_features"
                 })
 
         return JSONResponse(content={
@@ -588,7 +678,6 @@ async def analyze_image_masks(
             "success": False,
             "error": str(e)
         }, status_code=500)
-
 
 if __name__ == "__main__":
     import uvicorn
