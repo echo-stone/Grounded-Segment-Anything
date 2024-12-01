@@ -231,7 +231,7 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 0.5) -> List[List[int]]
         contours, hierarchy = cv2.findContours(
             mask_binary,
             cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_NONE
+            cv2.CHAIN_APPROX_SIMPLE
         )
 
         # Debug: Print number of contours found
@@ -449,7 +449,7 @@ async def analyze_image_with_visualization(
             contours, _ = cv2.findContours(
                 mask_binary,
                 cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_NONE
+                cv2.CHAIN_APPROX_SIMPLE
             )
 
             contour_img = np.ones_like(mask_binary) * 255
