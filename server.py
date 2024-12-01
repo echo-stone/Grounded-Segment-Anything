@@ -329,13 +329,15 @@ def find_board_corners(mask):
     edges = cv2.Canny(mask, 50, 150, apertureSize=3)
 
     # Apply Hough Transform
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=20)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=50)
     if lines is None or len(lines) < 4:
+        print(f"not enough HoughLines {len(lines)}")
         return None, None, None
 
     # Filter lines to get the strongest 4 lines
     filtered_lines = filter_lines(lines)
     if len(filtered_lines) < 4:
+        print(f"not enough filtered_lines {len(filtered_lines)}")
         return None, None, None
 
     # Convert lines from polar to cartesian coordinates
