@@ -439,7 +439,7 @@ def find_board_corners_with_fallback(mask):
         block_size = max(11, int(min_dimension * 0.01))
         if block_size % 2 == 0:  # blockSize는 홀수여야 함
             block_size += 1
-        block_size = min(15, block_size)  # 최대값 제한
+        # block_size = min(15, block_size)  # 최대값 제한
 
         # Add padding to help with corner detection near edges
         pad_size = block_size
@@ -455,7 +455,7 @@ def find_board_corners_with_fallback(mask):
         # Detect corners
         corners = cv2.goodFeaturesToTrack(
             blurred,
-            maxCorners=8,  # Detect more corners than needed
+            maxCorners=4,  # Detect more corners than needed
             qualityLevel=0.01,
             minDistance=min_distance,
             blockSize=block_size
