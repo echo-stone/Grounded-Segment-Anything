@@ -386,6 +386,7 @@ def find_board_corners(mask):
 def find_board_corners_with_fallback(mask):
     """
     Find board corners using Hough Transform with goodFeaturesToTrack as fallback.
+    Falls back if detected area is less than 20% of image area.
 
     Args:
         mask: Binary mask image (numpy array)
@@ -399,10 +400,27 @@ def find_board_corners_with_fallback(mask):
     # First try with Hough Transform
     corners, cartesian_lines, filtered_lines = find_board_corners(mask)
 
+    # Check if corners were found
     if corners is not None and len(corners) == 4:
-        return corners, cartesian_lines, filtered_lines
+        # Calculate the area of the detected quadrilateral
+        height, width = mask.shape
+        total_image_area = height * width
 
-    print("Hough transform corner detection failed, trying goodFeaturesToTrack...")
+        # Calculate area using Shoelace formula
+        corners_wrapped = np.vstack((corners, corners[0]))  # Add first point at end
+        area = 0
+        for i in range(len(corners)):
+            area += corners_wrapped[i][0] * corners_wrapped[i + 1][1]
+            area -= corners_wrapped[i + 1][0] * corners_wrapped[i][1]
+        area = abs(area) / 2
+
+        # Check if area is at least 20% of image area
+        if area >= 0.2 * total_image_area:
+            return corners, cartesian_lines, filtered_lines
+        else:
+            print(f"Detected area ({area:.2f}) is less than 20% of image area ({total_image_area:.2f}), falling back to goodFeaturesToTrack")
+    else:
+        print("Hough transform corner detection failed, trying goodFeaturesToTrack...")
 
     try:
         # Convert to proper format for goodFeaturesToTrack
@@ -415,11 +433,9 @@ def find_board_corners_with_fallback(mask):
         min_dimension = min(height, width)
 
         # minDistance: 이미지 크기의 약 2%~5% 정도가 적절
-        # 너무 작으면 불필요한 코너가 많이 검출되고, 너무 크면 실제 코너를 놓칠 수 있음
         min_distance = max(100, int(min_dimension * 0.1))  # 최소 20픽셀
 
         # blockSize: 이미지 크기에 따라 3~15 사이의 값으로 조정
-        # 이미지가 크면 더 큰 블록 사이즈가 필요할 수 있음
         block_size = max(11, int(min_dimension * 0.01))
         if block_size % 2 == 0:  # blockSize는 홀수여야 함
             block_size += 1
