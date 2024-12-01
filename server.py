@@ -362,7 +362,8 @@ async def analyze_image_with_visualization(
         image: UploadFile = File(...),
         text_prompt: str = Form(...),
         box_threshold: float = Form(0.3),
-        text_threshold: float = Form(0.25)
+        text_threshold: float = Form(0.25),
+        tolerance: float = Form(0.01)  # tolerance 파라미터 추가
 ) -> FileResponse:
     try:
         # 입력 이미지 저장
@@ -414,51 +415,51 @@ async def analyze_image_with_visualization(
         for mask_idx, (mask, box, phrase, color) in enumerate(zip(masks, boxes_filt, pred_phrases, colors)):
             mask_np = mask.cpu().numpy().squeeze()
 
-            # 1. 원본 마스크 - 값 범위를 [0, 1]로 정규화
+            # 1. 원본 마스크
             ax1 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 1)
             ax1.imshow(mask_np, cmap='gray', vmin=0, vmax=1)
             ax1.set_title(f'Original Mask {mask_idx + 1}')
             ax1.axis('off')
 
-            # 2. 바이너리 마스크 - 임계값 적용
+            # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
             ax2 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 2)
             ax2.imshow(mask_binary, cmap='gray', vmin=0, vmax=255)
             ax2.set_title(f'Binary Mask {mask_idx + 1}')
             ax2.axis('off')
 
-            # 3. 컨투어 - 흰색 배경에 검은색 선으로 표시
+            # 3. 컨투어
             contours, _ = cv2.findContours(
                 mask_binary,
                 cv2.RETR_EXTERNAL,
                 cv2.CHAIN_APPROX_NONE
             )
 
-            contour_img = np.ones_like(mask_binary) * 255  # 흰색 배경
-            cv2.drawContours(contour_img, contours, -1, 0, 2)  # 검은색 선
+            contour_img = np.ones_like(mask_binary) * 255
+            cv2.drawContours(contour_img, contours, -1, 0, 2)
             ax3 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 3)
             ax3.imshow(contour_img, cmap='gray', vmin=0, vmax=255)
             ax3.set_title(f'Contours {mask_idx + 1}')
             ax3.axis('off')
 
             # 4. 근사화된 폴리곤
-            polygon_img = np.ones_like(mask_binary) * 255  # 흰색 배경
+            polygon_img = np.ones_like(mask_binary) * 255
             if contours:
                 main_contour = max(contours, key=cv2.contourArea)
-                epsilon = 0.01 * cv2.arcLength(main_contour, True)
+                epsilon = tolerance * cv2.arcLength(main_contour, True)  # 입력받은 tolerance 사용
                 approx = cv2.approxPolyDP(main_contour, epsilon, True)
-                cv2.drawContours(polygon_img, [approx], -1, 0, 2)  # 검은색 선
+                cv2.drawContours(polygon_img, [approx], -1, 0, 2)
 
                 ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
                 ax4.imshow(polygon_img, cmap='gray', vmin=0, vmax=255)
-                ax4.set_title(f'Approximated Polygon {mask_idx + 1}\n({len(approx)} points)')
+                ax4.set_title(f'Approximated Polygon {mask_idx + 1}\n({len(approx)} points)\ntolerance: {tolerance:.3f}')
                 ax4.axis('off')
 
             # 5. 최종 결과
             ax5 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 5)
             ax5.imshow(image_array)
 
-            polygon = mask_to_polygon(mask_np, tolerance=0.01)
+            polygon = mask_to_polygon(mask_np, tolerance=tolerance)  # 입력받은 tolerance 사용
             if polygon:
                 polygon_np = np.array(polygon)
                 ax5.fill(polygon_np[:, 0], polygon_np[:, 1],
