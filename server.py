@@ -385,16 +385,7 @@ def find_board_corners(mask):
 
 def find_board_corners_with_fallback(mask):
     """
-    Find board corners using Hough Transform with goodFeaturesToTrack as fallback.
-
-    Args:
-        mask: Binary mask image (numpy array)
-
-    Returns:
-        tuple: (corners, cartesian_lines, filtered_lines)
-        - corners: numpy array of corner coordinates or None if detection fails
-        - cartesian_lines: list of line coordinates or None
-        - filtered_lines: list of filtered Hough lines or None
+    Find board corners using Hough Transform with improved goodFeaturesToTrack as fallback.
     """
     # First try with Hough Transform
     corners, cartesian_lines, filtered_lines = find_board_corners(mask)
@@ -406,23 +397,23 @@ def find_board_corners_with_fallback(mask):
 
     try:
         # Convert to proper format for goodFeaturesToTrack
-        mask_uint8 = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask
+        mask_uint8 = mask.astype(np.uint8) if mask.dtype != np.uint8 else mask.copy()
 
         # Add padding to help with corner detection near edges
-        pad_size = 10
+        pad_size = 20
         padded_mask = np.pad(mask_uint8, ((pad_size, pad_size), (pad_size, pad_size)),
                              mode='constant', constant_values=0)
 
         # Apply Gaussian blur to reduce noise
         blurred = cv2.GaussianBlur(padded_mask, (5, 5), 0)
 
-        # Detect corners
+        # Detect corners with more strict parameters
         corners = cv2.goodFeaturesToTrack(
             blurred,
-            maxCorners=8,  # Detect more corners than needed
-            qualityLevel=0.01,
-            minDistance=20,
-            blockSize=7
+            maxCorners=12,  # Detect more corners than needed for better selection
+            qualityLevel=0.02,
+            minDistance=30,
+            blockSize=9
         )
 
         if corners is None or len(corners) < 4:
@@ -432,24 +423,77 @@ def find_board_corners_with_fallback(mask):
         # Remove padding offset from coordinates
         corners = corners.squeeze() - pad_size
 
-        # If we have more than 4 corners, select the best 4
-        if len(corners) > 4:
-            # Calculate distances from center
-            center = np.mean(corners, axis=0)
-            distances = np.linalg.norm(corners - center, axis=1)
+        # Find the bounding box of all detected points
+        min_x = np.min(corners[:, 0])
+        max_x = np.max(corners[:, 0])
+        min_y = np.min(corners[:, 1])
+        max_y = np.max(corners[:, 1])
 
-            # Get indices of the 4 corners furthest from center
-            corner_indices = np.argsort(distances)[-4:]
-            corners = corners[corner_indices]
+        # Define regions for corner classification
+        width = max_x - min_x
+        height = max_y - min_y
+        region_threshold = 0.25  # threshold for region classification
 
-        # Sort corners in clockwise order
-        center = np.mean(corners, axis=0)
-        angles = np.arctan2(corners[:, 1] - center[1],
-                            corners[:, 0] - center[0])
-        sorted_indices = np.argsort(angles)
-        corners = corners[sorted_indices]
+        def classify_corner(x, y):
+            """Classify corner into one of four corners based on position"""
+            x_rel = (x - min_x) / width
+            y_rel = (y - min_y) / height
 
-        return corners, None, None  # Return None for lines since we didn't use Hough
+            if x_rel < region_threshold:  # Left side
+                if y_rel < region_threshold:
+                    return 'top_left'
+                elif y_rel > (1 - region_threshold):
+                    return 'bottom_left'
+            elif x_rel > (1 - region_threshold):  # Right side
+                if y_rel < region_threshold:
+                    return 'top_right'
+                elif y_rel > (1 - region_threshold):
+                    return 'bottom_right'
+            return None
+
+        # Classify all corners
+        corner_regions = {}
+        for corner in corners:
+            region = classify_corner(corner[0], corner[1])
+            if region:
+                if region not in corner_regions:
+                    corner_regions[region] = []
+                corner_regions[region].append(corner)
+
+        # Select best corner for each region based on distance from image edge
+        final_corners = []
+        required_regions = ['top_left', 'top_right', 'bottom_right', 'bottom_left']
+
+        for region in required_regions:
+            if region in corner_regions and corner_regions[region]:
+                if region == 'top_left':
+                    # Select point closest to top-left corner (0,0)
+                    best_corner = min(corner_regions[region],
+                                      key=lambda p: np.sqrt(p[0] ** 2 + p[1] ** 2))
+                elif region == 'top_right':
+                    # Select point closest to top-right corner (width,0)
+                    best_corner = min(corner_regions[region],
+                                      key=lambda p: np.sqrt((p[0] - max_x) ** 2 + p[1] ** 2))
+                elif region == 'bottom_right':
+                    # Select point closest to bottom-right corner (width,height)
+                    best_corner = min(corner_regions[region],
+                                      key=lambda p: np.sqrt((p[0] - max_x) ** 2 + (p[1] - max_y) ** 2))
+                elif region == 'bottom_left':
+                    # Select point closest to bottom-left corner (0,height)
+                    best_corner = min(corner_regions[region],
+                                      key=lambda p: np.sqrt(p[0] ** 2 + (p[1] - max_y) ** 2))
+                final_corners.append(best_corner)
+
+        if len(final_corners) != 4:
+            print(f"Could not find corners in all regions. Found only {len(final_corners)} corners")
+            return None, None, None
+
+        corners = np.array(final_corners)
+
+        # Sort corners in clockwise order starting from top-left
+        # This is already handled by our region-based selection
+
+        return corners, None, None
 
     except Exception as e:
         print(f"Error in goodFeaturesToTrack fallback: {str(e)}")
