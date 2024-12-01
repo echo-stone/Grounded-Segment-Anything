@@ -440,10 +440,6 @@ async def analyze_image_with_visualization(
             # 원래 크기로 복원
             mask_binary = padded_mask[padding_size:-padding_size, padding_size:-padding_size]
 
-            # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-            mask_binary = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel)
-
             ax2 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 2)
             ax2.imshow(mask_binary, cmap='gray', vmin=0, vmax=255)
             ax2.set_title(f'Binary Mask {mask_idx + 1}\n(with morph close)')
