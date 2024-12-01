@@ -484,7 +484,8 @@ async def analyze_image_with_visualization(
                 ax5.plot(polygon_np[:, 0], polygon_np[:, 1],
                          color=color, linewidth=2)
 
-            ax5.set_title(f'Final Result {mask_idx + 1}')
+            confidence = float(phrase.split('(')[-1].strip(')'))
+            ax5.set_title(f'Final Result {mask_idx + 1}\nConfidence: {confidence:.3f}')
             ax5.axis('off')
 
         plt.tight_layout()
