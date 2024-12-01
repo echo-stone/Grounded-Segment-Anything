@@ -332,13 +332,13 @@ def find_board_corners(mask):
     lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=50)
     if lines is None or len(lines) < 4:
         print(f"not enough HoughLines {len(lines)}")
-        return None, None, None
+        return None, None, lines
 
     # Filter lines to get the strongest 4 lines
     filtered_lines = filter_lines(lines)
     if len(filtered_lines) < 4:
         print(f"not enough filtered_lines {len(filtered_lines)}")
-        return None, None, None
+        return None, None, filtered_lines
 
     # Convert lines from polar to cartesian coordinates
     cartesian_lines = []
@@ -380,7 +380,7 @@ def find_board_corners(mask):
 
         return corners, cartesian_lines, filtered_lines
 
-    return None, None, None
+    return corners, cartesian_lines, filtered_lines
 
 
 @app.post("/analyze/visualize")
