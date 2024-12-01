@@ -30,10 +30,10 @@ RUN pip install --no-cache-dir diffusers[torch]==0.15.1 opencv-python==4.7.0.72 
     onnxruntime==1.14.1 onnx==1.13.1 ipykernel==6.16.2 scipy gradio openai
 
 #WORKDIR /home/appuser/Grounded-Segment-Anything/GroundingDINO
-RUN #python setup.py build install
+#RUN #python setup.py build install
 
 #WORKDIR /home/appuser/Grounded-Segment-Anything/GroundingDINO/models/GroundingDINO
-RUN #python setup.py build develop
+#RUN #python setup.py build develop
 
 WORKDIR /home/appuser/Grounded-Segment-Anything
 RUN wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth
