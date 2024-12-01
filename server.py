@@ -205,43 +205,65 @@ async def analyze_image(
         return {"error": str(e)}
 
 
-def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]:
+def mask_to_polygon(mask: np.ndarray, tolerance: float = 0.5) -> List[List[int]]:
     """
-    마스크를 단일 다각형 좌표로 변환합니다 (외곽 윤곽선만 사용).
+    마스크를 단일 다각형 좌표로 변환합니다.
 
     Args:
         mask: 2D numpy array (binary mask)
-        tolerance: 다각형 단순화 파라미터
+        tolerance: 다각형 단순화 파라미터 (낮을수록 더 정확한 윤곽선)
 
     Returns:
         List of [x,y] coordinates representing the polygon
     """
     try:
-        # Ensure mask is binary
+        # Debug: Print mask statistics
+        print(f"Mask shape: {mask.shape}")
+        print(f"Mask value range: [{mask.min()}, {mask.max()}]")
+
+        # Ensure mask is binary and convert to uint8
         mask_binary = (mask > 0.5).astype(np.uint8) * 255
 
-        # Find contours
-        contours, _ = cv2.findContours(
+        # Debug: Print number of non-zero pixels
+        print(f"Number of non-zero pixels: {np.count_nonzero(mask_binary)}")
+
+        # Find contours with CHAIN_APPROX_NONE for maximum detail
+        contours, hierarchy = cv2.findContours(
             mask_binary,
             cv2.RETR_EXTERNAL,
-            cv2.CHAIN_APPROX_TC89_KCOS  # Use more precise approximation method
+            cv2.CHAIN_APPROX_NONE
         )
 
+        # Debug: Print number of contours found
+        print(f"Number of contours found: {len(contours)}")
+
         if not contours:
+            print("No contours found in mask")
             return []
 
         # Get the largest contour by area
         main_contour = max(contours, key=cv2.contourArea)
+        contour_area = cv2.contourArea(main_contour)
+        print(f"Largest contour area: {contour_area}")
 
-        # Approximate the contour
+        # Only proceed if the contour area is significant
+        if contour_area < 10:  # Minimum area threshold
+            print("Contour area too small")
+            return []
+
+        # Use a smaller epsilon for more precise approximation
         epsilon = tolerance * cv2.arcLength(main_contour, True)
         approx = cv2.approxPolyDP(main_contour, epsilon, True)
+
+        # Debug: Print number of points in approximated polygon
+        print(f"Number of points in approximated polygon: {len(approx)}")
 
         # Convert the contour points to a list of [x,y] coordinates
         polygon = [[int(point[0][0]), int(point[0][1])] for point in approx]
 
         # Ensure we have enough points for a meaningful polygon
         if len(polygon) < 3:
+            print("Not enough points for a polygon")
             return []
 
         return polygon
@@ -251,7 +273,7 @@ def mask_to_polygon(mask: np.ndarray, tolerance: float = 2.0) -> List[List[int]]
         return []
 
 
-@app.post("/analyze/masks/")
+@app.post("/analyze/masks")
 async def analyze_image_masks(
         image: UploadFile = File(...),
         text_prompt: str = Form(...),
@@ -277,13 +299,6 @@ async def analyze_image_masks(
             device=DEVICE
         )
 
-        if len(boxes_filt) == 0:
-            return JSONResponse(content={
-                "success": True,
-                "objects": [],
-                "image_size": {"width": image_pil.size[0], "height": image_pil.size[1]}
-            })
-
         # Process image for SAM
         image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
         sam_predictor.set_image(image_array)
@@ -291,11 +306,6 @@ async def analyze_image_masks(
         # Transform boxes
         size = image_pil.size
         H, W = size[1], size[0]
-        for i in range(boxes_filt.size(0)):
-            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-            boxes_filt[i][2:] += boxes_filt[i][:2]
-
         transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
 
         # Generate masks
@@ -306,14 +316,18 @@ async def analyze_image_masks(
             multimask_output=False,
         )
 
+        print(f"Number of masks generated: {len(masks)}")
+
         # Convert masks to polygons and create response
         results = []
         for idx, (mask, box, phrase) in enumerate(zip(masks, boxes_filt, pred_phrases)):
+            print(f"\nProcessing mask {idx + 1}")
+
             # Convert mask to numpy array
             mask_np = mask.cpu().numpy().squeeze()
 
-            # Convert to polygon with smaller tolerance for more precise boundary
-            polygon = mask_to_polygon(mask_np, tolerance=1.0)  # Reduced tolerance for more detail
+            # Get polygon with debug information
+            polygon = mask_to_polygon(mask_np, tolerance=0.5)
 
             # Extract confidence score from phrase
             confidence = float(phrase.split('(')[-1].strip(')'))
