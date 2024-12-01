@@ -423,11 +423,10 @@ async def analyze_image_with_visualization(
 
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
-            mask_binary = mask_np
 
-            # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
+            # 이미지의 짧은 쪽 길이의 7%로 커널 크기 설정
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
-            kernel_size = max(3, int(min_side * 0.05))  # 최소 3x3 보장
+            kernel_size = max(3, int(min_side * 0.7))  # 최소 3x3 보장
             kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1  # 홀수로 만들기
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
             mask_binary = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel)
