@@ -446,10 +446,28 @@ async def analyze_image_with_visualization(
 
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
+
+            # 패딩 추가
+            # 패딩 크기 설정 (커널 크기의 2배)
+            min_side = min(mask_binary.shape[0], mask_binary.shape[1])
+            kernel_size = max(3, int(min_side * 0.05))  # 최소 3x3 보장
+            kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1  # 홀수로 만들기
+            padding_size = kernel_size * 2
+
+            padded_mask = np.pad(mask_binary, ((padding_size, padding_size), (padding_size, padding_size)),
+                                 mode='constant', constant_values=0)
+            # 패딩된 마스크에 대해 모폴로지 연산 수행
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            padded_mask = cv2.morphologyEx(padded_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+
+            # 원래 크기로 복원
+            mask_binary = padded_mask[padding_size:-padding_size, padding_size:-padding_size]
+
             ax2 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 2)
             ax2.imshow(mask_binary, cmap='gray', vmin=0, vmax=255)
             ax2.set_title(f'Binary Mask {mask_idx + 1}')
             ax2.axis('off')
+
 
             # 3. 엣지 및 허프 라인
             edges = cv2.Canny(mask_binary, 50, 150, apertureSize=3)
