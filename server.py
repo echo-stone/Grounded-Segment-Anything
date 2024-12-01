@@ -363,7 +363,7 @@ async def analyze_image_with_visualization(
         text_prompt: str = Form(...),
         box_threshold: float = Form(0.3),
         text_threshold: float = Form(0.25),
-        tolerance: float = Form(0.01)  # tolerance 파라미터 추가
+        tolerance: float = Form(0.01)
 ) -> FileResponse:
     try:
         # 입력 이미지 저장
@@ -423,9 +423,17 @@ async def analyze_image_with_visualization(
 
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
+
+            # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
+            min_side = min(mask_binary.shape[0], mask_binary.shape[1])
+            kernel_size = max(3, int(min_side * 0.05))  # 최소 3x3 보장
+            kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1  # 홀수로 만들기
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+            mask_binary = cv2.morphologyEx(mask_binary, cv2.MORPH_CLOSE, kernel)
+
             ax2 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 2)
             ax2.imshow(mask_binary, cmap='gray', vmin=0, vmax=255)
-            ax2.set_title(f'Binary Mask {mask_idx + 1}')
+            ax2.set_title(f'Binary Mask {mask_idx + 1}\n(with morph close)')
             ax2.axis('off')
 
             # 3. 컨투어
@@ -446,7 +454,7 @@ async def analyze_image_with_visualization(
             polygon_img = np.ones_like(mask_binary) * 255
             if contours:
                 main_contour = max(contours, key=cv2.contourArea)
-                epsilon = tolerance * cv2.arcLength(main_contour, True)  # 입력받은 tolerance 사용
+                epsilon = tolerance * cv2.arcLength(main_contour, True)
                 approx = cv2.approxPolyDP(main_contour, epsilon, True)
                 cv2.drawContours(polygon_img, [approx], -1, 0, 2)
 
@@ -466,11 +474,6 @@ async def analyze_image_with_visualization(
                          color=color, alpha=0.3)
                 ax5.plot(polygon_np[:, 0], polygon_np[:, 1],
                          color=color, linewidth=2)
-
-            # 바운딩 박스만 그리고 레이블 텍스트는 제거
-            # x0, y0, x1, y1 = box.cpu().numpy()
-            # ax5.plot([x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0],
-            #          color=color, linewidth=2)
 
             ax5.set_title(f'Final Result {mask_idx + 1}')
             ax5.axis('off')
