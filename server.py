@@ -423,6 +423,7 @@ async def analyze_image_with_visualization(
 
             # 2. 바이너리 마스크
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
+            mask_binary = mask_np
 
             # 이미지의 짧은 쪽 길이의 5%로 커널 크기 설정
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
