@@ -365,12 +365,51 @@ async def analyze_image_with_visualization(
         text_threshold: float = Form(0.25)
 ) -> FileResponse:
     try:
-        # ... (이전 코드와 동일) ...
+        # 입력 이미지 저장
+        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
+        with open(image_path, "wb") as buffer:
+            shutil.copyfileobj(image.file, buffer)
+
+        # 이미지 로드 및 처리
+        image_pil, image_tensor = load_image(image_path)
+
+        # Grounding DINO 출력
+        boxes_filt, pred_phrases = get_grounding_output(
+            grounding_dino_model,
+            image_tensor,
+            text_prompt,
+            box_threshold,
+            text_threshold,
+            device=DEVICE
+        )
+
+        # SAM 처리
+        image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+        sam_predictor.set_image(image_array)
+
+        # 박스 변환
+        size = image_pil.size
+        H, W = size[1], size[0]
+        for i in range(boxes_filt.size(0)):
+            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
+            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
+            boxes_filt[i][2:] += boxes_filt[i][:2]
+
+        transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
+
+        # SAM을 사용하여 마스크 생성
+        masks, _, _ = sam_predictor.predict_torch(
+            point_coords=None,
+            point_labels=None,
+            boxes=transformed_boxes,
+            multimask_output=False,
+        )
 
         # 전체 시각화를 위한 subplot 설정
         num_masks = len(masks)
         num_stages = 5
         fig = plt.figure(figsize=(20, 4 * num_masks))
+        colors = plt.cm.rainbow(np.linspace(0, 1, num_masks))
 
         for mask_idx, (mask, box, phrase, color) in enumerate(zip(masks, boxes_filt, pred_phrases, colors)):
             mask_np = mask.cpu().numpy().squeeze()
@@ -410,12 +449,12 @@ async def analyze_image_with_visualization(
                 approx = cv2.approxPolyDP(main_contour, epsilon, True)
                 cv2.drawContours(polygon_img, [approx], -1, 0, 2)  # 검은색 선
 
-            ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
-            ax4.imshow(polygon_img, cmap='gray', vmin=0, vmax=255)
-            ax4.set_title(f'Approximated Polygon {mask_idx + 1}\n({len(approx)} points)')
-            ax4.axis('off')
+                ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
+                ax4.imshow(polygon_img, cmap='gray', vmin=0, vmax=255)
+                ax4.set_title(f'Approximated Polygon {mask_idx + 1}\n({len(approx)} points)')
+                ax4.axis('off')
 
-            # 5. 최종 결과 (이전과 동일)
+            # 5. 최종 결과
             ax5 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 5)
             ax5.imshow(image_array)
 
@@ -427,14 +466,15 @@ async def analyze_image_with_visualization(
                 ax5.plot(polygon_np[:, 0], polygon_np[:, 1],
                          color=color, linewidth=2)
 
-            box_np = box.cpu().numpy()
-            x1, y1, x2, y2 = box_np * np.array([W, H, W, H])
-            ax5.plot([x1, x2, x2, x1, x1], [y1, y1, y2, y2, y1],
+            # 바운딩 박스 그리기
+            x0, y0, x1, y1 = box.cpu().numpy()
+            ax5.plot([x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0],
                      color=color, linewidth=2)
 
+            # 레이블 추가
             confidence = float(phrase.split('(')[-1].strip(')'))
             label = phrase.split('(')[0].strip()
-            ax5.text(x1, y1 - 5, f'{label} ({confidence:.2f})',
+            ax5.text(x0, y0 - 5, f'{label} ({confidence:.2f})',
                      color=color, fontsize=12,
                      bbox=dict(facecolor='white', alpha=0.7))
 
