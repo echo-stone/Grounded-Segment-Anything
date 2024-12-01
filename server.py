@@ -329,7 +329,7 @@ def find_board_corners(mask):
     edges = cv2.Canny(mask, 50, 150, apertureSize=3)
 
     # Apply Hough Transform
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=50)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, threshold=10)
     if lines is None or len(lines) < 4:
         print(f"not enough HoughLines {len(lines)}")
         return None, None, lines
