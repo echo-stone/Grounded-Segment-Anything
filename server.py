@@ -595,7 +595,7 @@ async def analyze_image_with_visualization(
 
             # 패딩 및 모폴로지 연산 적용
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
-            kernel_size = max(3, int(min_side * 0.05))
+            kernel_size = max(3, int(min_side * 0.03))
             kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
             padding_size = kernel_size * 2
 
