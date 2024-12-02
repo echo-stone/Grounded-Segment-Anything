@@ -1,21 +1,20 @@
-from fastapi import FastAPI, File, Form, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
 import os
-import torch
-from PIL import Image
-import cv2
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
 import shutil
 from typing import List, Dict
-import json
+
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from PIL import Image
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+
 # Grounding DINO imports
 import GroundingDINO.groundingdino.datasets.transforms as T
 from GroundingDINO.groundingdino.models import build_model
 from GroundingDINO.groundingdino.util.slconfig import SLConfig
 from GroundingDINO.groundingdino.util.utils import clean_state_dict, get_phrases_from_posmap
-
 # Segment Anything imports
 from segment_anything import sam_model_registry, SamPredictor
 
@@ -527,6 +526,19 @@ def visualize_corners_on_image(ax, image, corners, cartesian_lines=None):
 
     ax.axis('off')
 
+
+import os
+import shutil
+from typing import List, Dict
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from PIL import Image
+from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+
+
 @app.post("/analyze/visualize")
 async def analyze_image_with_visualization(
         image: UploadFile = File(...),
@@ -535,15 +547,15 @@ async def analyze_image_with_visualization(
         text_threshold: float = Form(0.25)
 ) -> FileResponse:
     try:
-        # 입력 이미지 저장
+        # Save input image
         image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
         with open(image_path, "wb") as buffer:
             shutil.copyfileobj(image.file, buffer)
 
-        # 이미지 로드 및 처리
+        # Load and process image
         image_pil, image_tensor = load_image(image_path)
 
-        # Grounding DINO 출력
+        # Get Grounding DINO output
         boxes_filt, pred_phrases = get_grounding_output(
             grounding_dino_model,
             image_tensor,
@@ -553,11 +565,11 @@ async def analyze_image_with_visualization(
             device=DEVICE
         )
 
-        # SAM 처리
+        # Process for SAM
         image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
         sam_predictor.set_image(image_array)
 
-        # 박스 변환
+        # Transform boxes
         size = image_pil.size
         H, W = size[1], size[0]
         for i in range(boxes_filt.size(0)):
@@ -567,7 +579,7 @@ async def analyze_image_with_visualization(
 
         transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
 
-        # SAM을 사용하여 마스크 생성
+        # Generate masks
         masks, _, _ = sam_predictor.predict_torch(
             point_coords=None,
             point_labels=None,
@@ -575,25 +587,23 @@ async def analyze_image_with_visualization(
             multimask_output=False,
         )
 
-        # 전체 시각화를 위한 subplot 설정
+        # Set up visualization
         num_masks = len(masks)
-        num_stages = 5
-        fig = plt.figure(figsize=(20, 4 * num_masks))
+        num_stages = 6  # Added one more stage for warped image
+        fig = plt.figure(figsize=(24, 4 * num_masks))
         colors = plt.cm.rainbow(np.linspace(0, 1, num_masks))
 
         for mask_idx, (mask, box, phrase, color) in enumerate(zip(masks, boxes_filt, pred_phrases, colors)):
             mask_np = mask.cpu().numpy().squeeze()
 
-            # 1. 원본 마스크
+            # 1. Original mask
             ax1 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 1)
             ax1.imshow(mask_np, cmap='gray', vmin=0, vmax=1)
             ax1.set_title(f'Original Mask {mask_idx + 1}')
             ax1.axis('off')
 
-            # 2. 바이너리 마스크
+            # 2. Binary mask with preprocessing
             mask_binary = (mask_np > 0.1).astype(np.uint8) * 255
-
-            # 패딩 및 모폴로지 연산 적용
             min_side = min(mask_binary.shape[0], mask_binary.shape[1])
             kernel_size = max(3, int(min_side * 0.03))
             kernel_size = kernel_size if kernel_size % 2 == 1 else kernel_size + 1
@@ -610,18 +620,17 @@ async def analyze_image_with_visualization(
             ax2.set_title(f'Binary Mask {mask_idx + 1}')
             ax2.axis('off')
 
-            # 3. 엣지
+            # 3. Edges
             edges = cv2.Canny(mask_binary, 50, 150, apertureSize=3)
             ax3 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 3)
             ax3.imshow(edges, cmap='gray')
             ax3.set_title(f'Edges {mask_idx + 1}')
             ax3.axis('off')
 
-            # 4. 코너 검출 결과 (with fallback)
+            # 4. Corner detection
             corners, cartesian_lines, _ = find_board_corners_with_fallback(mask_binary)
             ax4 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 4)
 
-            # Create a blank image for lines
             line_img = np.zeros_like(mask_binary)
             if cartesian_lines is not None:
                 for line in cartesian_lines:
@@ -637,12 +646,41 @@ async def analyze_image_with_visualization(
             ax4.set_title(f'Corners ({detection_method}) {mask_idx + 1}')
             ax4.axis('off')
 
-            # 5. 최종 결과
+            # 5. Final result with corners
             ax5 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 5)
             visualize_corners_on_image(ax5, image_array, corners, cartesian_lines)
 
             confidence = float(phrase.split('(')[-1].strip(')'))
             ax5.set_title(f'Final Result {mask_idx + 1}\nConfidence: {confidence:.3f}')
+
+            # 6. Warped perspective (1000x1000)
+            ax6 = plt.subplot(num_masks, num_stages, mask_idx * num_stages + 6)
+            if corners is not None and len(corners) == 4:
+                # Define destination points for 1000x1000 square
+                dst_points = np.array([
+                    [0, 0],
+                    [1000, 0],
+                    [1000, 1000],
+                    [0, 1000]
+                ], dtype=np.float32)
+
+                # Convert corners to float32
+                src_points = corners.astype(np.float32)
+
+                # Calculate perspective transform matrix
+                M = cv2.getPerspectiveTransform(src_points, dst_points)
+
+                # Apply perspective transform
+                warped = cv2.warpPerspective(image_array, M, (1000, 1000))
+
+                # Display warped image
+                ax6.imshow(warped)
+                ax6.set_title(f'Warped Result {mask_idx + 1}\n(1000x1000)')
+            else:
+                ax6.text(0.5, 0.5, 'No valid corners detected',
+                         ha='center', va='center')
+                ax6.set_title(f'Warped Result {mask_idx + 1}\n(Failed)')
+            ax6.axis('off')
 
         plt.tight_layout()
         output_path = os.path.join(OUTPUT_DIR, "visualization_output.png")
@@ -663,7 +701,6 @@ async def analyze_image_with_visualization(
             content={"success": False, "error": str(e)},
             status_code=500
         )
-
 
 @app.post("/analyze/masks")
 async def analyze_image_masks(
