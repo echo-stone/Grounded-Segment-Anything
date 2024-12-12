@@ -116,93 +116,6 @@ async def startup_event():
 
     print("Models loaded successfully!")
 
-
-@app.post("/analyze")
-async def analyze_image(
-        image: UploadFile = File(...),
-        text_prompt: str = Form(...),
-        box_threshold: float = Form(0.3),
-        text_threshold: float = Form(0.25)
-):
-    try:
-        # Save uploaded image to output directory
-        image_path = os.path.join(OUTPUT_DIR, "input_image.jpg")
-        with open(image_path, "wb") as buffer:
-            shutil.copyfileobj(image.file, buffer)
-
-        print(f"Processing image with prompt: {text_prompt}")
-
-        # Load and process image
-        image_pil, image_tensor = load_image(image_path)
-
-        # Get Grounding DINO output
-        boxes_filt, pred_phrases = get_grounding_output(
-            grounding_dino_model,
-            image_tensor,
-            text_prompt,
-            box_threshold,
-            text_threshold,
-            device=DEVICE
-        )
-
-        # Process image for SAM
-        image_array = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-        sam_predictor.set_image(image_array)
-
-        # Transform boxes
-        size = image_pil.size
-        H, W = size[1], size[0]
-        for i in range(boxes_filt.size(0)):
-            boxes_filt[i] = boxes_filt[i] * torch.Tensor([W, H, W, H])
-            boxes_filt[i][:2] -= boxes_filt[i][2:] / 2
-            boxes_filt[i][2:] += boxes_filt[i][:2]
-
-        transformed_boxes = sam_predictor.transform.apply_boxes_torch(boxes_filt, image_array.shape[:2]).to(DEVICE)
-
-        # Generate masks
-        masks, _, _ = sam_predictor.predict_torch(
-            point_coords=None,
-            point_labels=None,
-            boxes=transformed_boxes,
-            multimask_output=False,
-        )
-
-        # Create visualization
-        plt.figure(figsize=(10, 10))
-        plt.imshow(image_array)
-        for mask in masks:
-            show_mask(mask.cpu().numpy(), plt.gca(), random_color=True)
-        for box, label in zip(boxes_filt, pred_phrases):
-            show_box(box.numpy(), plt.gca(), label)
-
-        plt.axis('off')
-
-        # Save output image
-        output_path = os.path.join(OUTPUT_DIR, "grounded_sam_output.jpg")
-        plt.savefig(
-            output_path,
-            bbox_inches="tight",
-            dpi=300,
-            pad_inches=0.0
-        )
-        plt.close()
-
-        print(f"Analysis complete. Result saved to: {output_path}")
-
-        if os.path.exists(output_path):
-            return FileResponse(
-                output_path,
-                media_type="image/jpeg",
-                filename="grounded_sam_output.jpg"
-            )
-        else:
-            return {"error": "Failed to generate output image"}
-
-    except Exception as e:
-        print(f"Error during processing: {str(e)}")
-        return {"error": str(e)}
-
-
 def mask_to_polygon(mask: np.ndarray, tolerance: float = 0.5) -> List[List[int]]:
     """
     마스크를 단일 다각형 좌표로 변환합니다.
@@ -659,9 +572,9 @@ async def analyze_image_with_visualization(
                 # Define destination points for 1000x1000 square
                 dst_points = np.array([
                     [0, 0],
-                    [1000, 0],
-                    [1000, 1000],
-                    [0, 1000]
+                    [2000, 0],
+                    [2000, 2000],
+                    [0, 2000]
                 ], dtype=np.float32)
 
                 # Convert corners to float32
@@ -671,7 +584,7 @@ async def analyze_image_with_visualization(
                 M = cv2.getPerspectiveTransform(src_points, dst_points)
 
                 # Apply perspective transform
-                warped = cv2.warpPerspective(image_array, M, (1000, 1000))
+                warped = cv2.warpPerspective(image_array, M, (2000, 2000))
 
                 # Display warped image
                 ax6.imshow(warped)
